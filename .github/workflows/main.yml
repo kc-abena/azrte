@@ -1,0 +1,71 @@
+name: Discover and Download Azure Blobs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  discover-download:
+    runs-on: ubuntu-latest
+
+    env:
+      DOWNLOAD_PATH: ./downloaded-blobs
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Login to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install jq (for JSON parsing)
+        run: sudo apt-get install jq -y
+
+      - name: Create download directory
+        run: mkdir -p ${{ env.DOWNLOAD_PATH }}
+
+      - name: Discover and optionally download blobs
+        run: |
+          # List all storage accounts in subscription
+          storageAccounts=$(az storage account list --query "[].{name:name, rg:resourceGroup}" -o json)
+
+          echo "$storageAccounts" | jq -c '.[]' | while read sa; do
+            saName=$(echo "$sa" | jq -r '.name')
+            rgName=$(echo "$sa" | jq -r '.rg')
+            echo "🔍 Checking Storage Account: $saName (Resource Group: $rgName)"
+
+            # Get a storage account key (required to list containers/blobs)
+            key=$(az storage account keys list --account-name "$saName" --resource-group "$rgName" --query '[0].value' -o tsv)
+
+            # List containers
+            containers=$(az storage container list --account-name "$saName" --account-key "$key" -o json)
+
+            echo "$containers" | jq -c '.[]' | while read container; do
+              containerName=$(echo "$container" | jq -r '.name')
+              echo "📦 Container: $containerName"
+
+              # List blobs in the container
+              blobs=$(az storage blob list --account-name "$saName" --account-key "$key" --container-name "$containerName" -o json)
+
+              echo "$blobs" | jq -c '.[]' | while read blob; do
+                blobName=$(echo "$blob" | jq -r '.name')
+                echo "➡️ Blob: $blobName"
+
+                # Download the blob (optional — comment out if you just want to list)
+                az storage blob download \
+                  --account-name "$saName" \
+                  --account-key "$key" \
+                  --container-name "$containerName" \
+                  --name "$blobName" \
+                  --file "${{ env.DOWNLOAD_PATH }}/$saName-$containerName-$(basename $blobName)" \
+                  --no-progress
+              done
+            done
+          done
