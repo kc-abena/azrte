@@ -31,20 +31,20 @@ jobs:
       - name: Create download directory
         run: mkdir -p ${{ env.DOWNLOAD_PATH }}
 
-      - name: Discover and optionally download blobs
+      - name: Discover and download blobs
         run: |
-          # List all storage accounts in subscription
+          # List all storage accounts in the subscription
           storageAccounts=$(az storage account list --query "[].{name:name, rg:resourceGroup}" -o json)
 
           echo "$storageAccounts" | jq -c '.[]' | while read sa; do
             saName=$(echo "$sa" | jq -r '.name')
             rgName=$(echo "$sa" | jq -r '.rg')
-            echo "🔍 Checking Storage Account: $saName (Resource Group: $rgName)"
+            echo "🔍 Storage Account: $saName (Resource Group: $rgName)"
 
-            # Get a storage account key (required to list containers/blobs)
+            # Get the storage account key (requires role: Storage Account Key Operator Service Role)
             key=$(az storage account keys list --account-name "$saName" --resource-group "$rgName" --query '[0].value' -o tsv)
 
-            # List containers
+            # List containers in the storage account
             containers=$(az storage container list --account-name "$saName" --account-key "$key" -o json)
 
             echo "$containers" | jq -c '.[]' | while read container; do
@@ -56,16 +56,24 @@ jobs:
 
               echo "$blobs" | jq -c '.[]' | while read blob; do
                 blobName=$(echo "$blob" | jq -r '.name')
-                echo "➡️ Blob: $blobName"
+                fileName="$(basename "$blobName")"
+                outFile="${{ env.DOWNLOAD_PATH }}/$saName-$containerName-$fileName"
 
-                # Download the blob (optional — comment out if you just want to list)
+                echo "⬇️ Downloading: $blobName → $outFile"
+
                 az storage blob download \
                   --account-name "$saName" \
                   --account-key "$key" \
                   --container-name "$containerName" \
                   --name "$blobName" \
-                  --file "${{ env.DOWNLOAD_PATH }}/$saName-$containerName-$(basename $blobName)" \
+                  --file "$outFile" \
                   --no-progress
               done
             done
           done
+
+      - name: Upload downloaded blobs as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-blobs
+          path: ${{ env.DOWNLOAD_PATH }}
