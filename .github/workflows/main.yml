@@ -1,4 +1,4 @@
-name: Discover and Download Azure Blobs
+name: Debug Azure Storage Discovery
 
 on:
   workflow_dispatch:
@@ -8,16 +8,10 @@ permissions:
   contents: read
 
 jobs:
-  discover-download:
+  debug-storage:
     runs-on: ubuntu-latest
 
-    env:
-      DOWNLOAD_PATH: ./downloaded-blobs
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
       - name: Login to Azure with OIDC
         uses: azure/login@v2
         with:
@@ -25,55 +19,21 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Install jq (for JSON parsing)
-        run: sudo apt-get install jq -y
-
-      - name: Create download directory
-        run: mkdir -p ${{ env.DOWNLOAD_PATH }}
-
-      - name: Discover and download blobs
+      - name: Debug - List all Storage Accounts
         run: |
-          # List all storage accounts in the subscription
-          storageAccounts=$(az storage account list --query "[].{name:name, rg:resourceGroup}" -o json)
+          echo "🔍 Listing Storage Accounts..."
+          az storage account list --query "[].{name:name, rg:resourceGroup}" -o table
 
-          echo "$storageAccounts" | jq -c '.[]' | while read sa; do
-            saName=$(echo "$sa" | jq -r '.name')
-            rgName=$(echo "$sa" | jq -r '.rg')
-            echo "🔍 Storage Account: $saName (Resource Group: $rgName)"
+      - name: Debug - Try one account (replace with known if needed)
+        run: |
+          echo "🔑 Attempting to list containers from a known storage account"
+          
+          # Replace this with one known storage account and resource group for test
+          STORAGE_ACCOUNT="<your-storage-account>"
+          RESOURCE_GROUP="<your-resource-group>"
 
-            # Get the storage account key (requires role: Storage Account Key Operator Service Role)
-            key=$(az storage account keys list --account-name "$saName" --resource-group "$rgName" --query '[0].value' -o tsv)
+          echo "Getting key for $STORAGE_ACCOUNT"
+          key=$(az storage account keys list --account-name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --query '[0].value' -o tsv)
 
-            # List containers in the storage account
-            containers=$(az storage container list --account-name "$saName" --account-key "$key" -o json)
-
-            echo "$containers" | jq -c '.[]' | while read container; do
-              containerName=$(echo "$container" | jq -r '.name')
-              echo "📦 Container: $containerName"
-
-              # List blobs in the container
-              blobs=$(az storage blob list --account-name "$saName" --account-key "$key" --container-name "$containerName" -o json)
-
-              echo "$blobs" | jq -c '.[]' | while read blob; do
-                blobName=$(echo "$blob" | jq -r '.name')
-                fileName="$(basename "$blobName")"
-                outFile="${{ env.DOWNLOAD_PATH }}/$saName-$containerName-$fileName"
-
-                echo "⬇️ Downloading: $blobName → $outFile"
-
-                az storage blob download \
-                  --account-name "$saName" \
-                  --account-key "$key" \
-                  --container-name "$containerName" \
-                  --name "$blobName" \
-                  --file "$outFile" \
-                  --no-progress
-              done
-            done
-          done
-
-      - name: Upload downloaded blobs as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: azure-blobs
-          path: ${{ env.DOWNLOAD_PATH }}
+          echo "📦 Listing containers"
+          az storage container list --account-name $STORAGE_ACCOUNT --account-key $key -o table
