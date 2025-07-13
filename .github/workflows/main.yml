@@ -15,7 +15,7 @@ jobs:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Get GitHub OIDC Token
+      - name: Get GitHub OIDC Token via GitHub Script
         id: oidc
         uses: actions/github-script@v7
         with:
@@ -37,21 +37,20 @@ jobs:
             core.setSecret(data.value);
             core.setOutput("oidc_token", data.value);
 
-      - name: Exchange OIDC for ARM and Graph tokens
+      - name: Exchange OIDC for ARM and Graph Tokens
         id: exchange
         run: |
           TENANT_ID="${{ secrets.AZURE_TENANT_ID }}"
           CLIENT_ID="${{ secrets.AZURE_CLIENT_ID }}"
           OIDC_TOKEN="${{ steps.oidc.outputs.oidc_token }}"
 
-          # Helper function to request token
+          # Function to request a token for a given scope
           request_token () {
             local SCOPE="$1"
             curl -s -X POST -H "Content-Type: application/x-www-form-urlencoded" \
               -d "client_id=$CLIENT_ID" \
               -d "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
-              -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
-              -d "client_assertion=$OIDC_TOKEN" \
+              -d "assertion=$OIDC_TOKEN" \
               -d "scope=$SCOPE" \
               -d "requested_token_use=on_behalf_of" \
               "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token"
@@ -90,9 +89,9 @@ jobs:
             -H "Authorization: Bearer ${{ steps.exchange.outputs.arm_token }}" \
             -H "Content-Type: application/json" | jq
 
-      - name: Call Graph API - List AAD Applications
+      - name: Call Microsoft Graph API - List Applications
         run: |
-          echo "🌐 Calling Microsoft Graph"
+          echo "🌐 Calling Microsoft Graph API"
           curl -s -X GET "https://graph.microsoft.com/v1.0/applications?\$top=5" \
             -H "Authorization: Bearer ${{ steps.exchange.outputs.graph_token }}" \
             -H "Content-Type: application/json" | jq
