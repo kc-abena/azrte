@@ -1,4 +1,4 @@
-name: Manual Azure OIDC Token Exchange
+name: Azure OIDC Token Exchange
 
 on:
   workflow_dispatch:
@@ -8,49 +8,91 @@ permissions:
   contents: read
 
 jobs:
-  azure-token-exchange:
+  get-azure-tokens:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Get GitHub OIDC Token via GitHub Script
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Get GitHub OIDC Token
         id: oidc
         uses: actions/github-script@v7
         with:
           script: |
-            const tokenRequestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=api://AzureADTokenExchange";
-            const tokenRequestToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+            const requestUrl = `${process.env.ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange`;
+            const token = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
 
-            const res = await fetch(tokenRequestUrl, {
+            const res = await fetch(requestUrl, {
               headers: {
-                Authorization: `bearer ${tokenRequestToken}`,
-              },
+                Authorization: `bearer ${token}`
+              }
             });
 
             if (!res.ok) {
-              throw new Error(`Failed to get OIDC token: ${res.status} ${res.statusText}`);
+              throw new Error(`OIDC token request failed: ${res.status} ${res.statusText}`);
             }
 
             const data = await res.json();
             core.setSecret(data.value);
             core.setOutput("oidc_token", data.value);
 
-      - name: Exchange OIDC Token for ARM and Graph Tokens
-        id: tokens
+      - name: Exchange OIDC for ARM and Graph tokens
+        id: exchange
         run: |
           TENANT_ID="${{ secrets.AZURE_TENANT_ID }}"
           CLIENT_ID="${{ secrets.AZURE_CLIENT_ID }}"
           OIDC_TOKEN="${{ steps.oidc.outputs.oidc_token }}"
 
-          echo "🔁 Requesting ARM token..."
-          ARM_RESPONSE=$(curl -s -X POST -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "client_id=$CLIENT_ID" \
-            -d "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
-            -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
-            -d "client_assertion=$OIDC_TOKEN" \
-            -d "scope=https://management.azure.com/.default" \
-            -d "requested_token_use=on_behalf_of" \
-            "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token")
+          # Helper function to request token
+          request_token () {
+            local SCOPE="$1"
+            curl -s -X POST -H "Content-Type: application/x-www-form-urlencoded" \
+              -d "client_id=$CLIENT_ID" \
+              -d "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
+              -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+              -d "client_assertion=$OIDC_TOKEN" \
+              -d "scope=$SCOPE" \
+              -d "requested_token_use=on_behalf_of" \
+              "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token"
+          }
 
+          echo "🔁 Requesting ARM token..."
+          ARM_RESPONSE=$(request_token "https://management.azure.com/.default")
           ARM_TOKEN=$(echo "$ARM_RESPONSE" | jq -r '.access_token')
+
+          if [ "$ARM_TOKEN" = "null" ] || [ -z "$ARM_TOKEN" ]; then
+            echo "❌ Failed to get ARM token"
+            echo "$ARM_RESPONSE"
+            exit 1
+          fi
+
           echo "::add-mask::$ARM_TOKEN"
-          echo "arm_token=$ARM_TOKEN" >> $GITHUB
+          echo "arm_token=$ARM_TOKEN" >> "$GITHUB_OUTPUT"
+
+          echo "🔁 Requesting Graph token..."
+          GRAPH_RESPONSE=$(request_token "https://graph.microsoft.com/.default")
+          GRAPH_TOKEN=$(echo "$GRAPH_RESPONSE" | jq -r '.access_token')
+
+          if [ "$GRAPH_TOKEN" = "null" ] || [ -z "$GRAPH_TOKEN" ]; then
+            echo "❌ Failed to get Graph token"
+            echo "$GRAPH_RESPONSE"
+            exit 1
+          fi
+
+          echo "::add-mask::$GRAPH_TOKEN"
+          echo "graph_token=$GRAPH_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Call ARM API - List Resource Groups
+        run: |
+          echo "🌐 Calling ARM API"
+          curl -s -X GET "https://management.azure.com/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourcegroups?api-version=2021-04-01" \
+            -H "Authorization: Bearer ${{ steps.exchange.outputs.arm_token }}" \
+            -H "Content-Type: application/json" | jq
+
+      - name: Call Graph API - List AAD Applications
+        run: |
+          echo "🌐 Calling Microsoft Graph"
+          curl -s -X GET "https://graph.microsoft.com/v1.0/applications?\$top=5" \
+            -H "Authorization: Bearer ${{ steps.exchange.outputs.graph_token }}" \
+            -H "Content-Type: application/json" | jq
