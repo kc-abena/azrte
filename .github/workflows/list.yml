@@ -23,4 +23,3 @@ jobs:
         run: |
           echo "Getting list of storage accounts..."
           STORAGE_ACCOUNTS=$(az storage account list --resource-group iam-azure-labs --query '[].{name:name, rg:resourceGroup}' -o json)
-          done
