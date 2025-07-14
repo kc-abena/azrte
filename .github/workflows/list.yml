@@ -23,7 +23,6 @@ jobs:
         run: |
           echo "Getting list of storage accounts..."
           az storage account list
-          az rest --method GET --url "https://graph.microsoft.com/v1.0/applications/${{ secrets.AZURE_CLIENT_ID }}"
           STORAGE_ACCOUNTS=$(az storage account list --resource-group iam-azure-labs --query '[].{name:name, rg:resourceGroup}' -o json)
           echo $STORAGE_ACCOUNTS
           if [ "$(echo "$STORAGE_ACCOUNTS" | jq length)" -eq 0 ]; then
