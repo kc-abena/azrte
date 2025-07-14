@@ -23,7 +23,7 @@ jobs:
         run: |
           echo "Getting list of storage accounts..."
           STORAGE_ACCOUNTS=$(az storage account list --resource-group iam-azure-labs --query '[].{name:name, rg:resourceGroup}' -o json)
-
+          echo $STORAGE_ACCOUNTS
           if [ "$(echo "$STORAGE_ACCOUNTS" | jq length)" -eq 0 ]; then
             echo "No storage accounts found."
             exit 1
