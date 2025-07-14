@@ -21,24 +21,6 @@ jobs:
 
       - name: List Storage Accounts and Containers
         run: |
-          echo "📦 Getting list of storage accounts..."
+          echo "Getting list of storage accounts..."
           STORAGE_ACCOUNTS=$(az storage account list --resource-group iam-azure-labs --query '[].{name:name, rg:resourceGroup}' -o json)
-
-          if [ "$(echo "$STORAGE_ACCOUNTS" | jq length)" -eq 0 ]; then
-            echo "❌ No storage accounts found."
-            exit 1
-          fi
-
-          echo "$STORAGE_ACCOUNTS" | jq -c '.[]' | while read -r account; do
-            ACCOUNT_NAME=$(echo "$account" | jq -r '.name')
-            RESOURCE_GROUP=$(echo "$account" | jq -r '.rg')
-
-            echo "🔍 Storage Account: $ACCOUNT_NAME (Resource Group: $RESOURCE_GROUP)"
-
-            echo "🔑 Fetching key..."
-            KEY=$(az storage account keys list --account-name "$ACCOUNT_NAME" --resource-group "$RESOURCE_GROUP" --query '[0].value' -o tsv)
-
-            echo "📂 Listing containers..."
-            az storage container list --account-name "$ACCOUNT_NAME" --account-key "$KEY" -o table || echo "⚠️ Failed to list containers for $ACCOUNT_NAME"
-            echo ""
           done
